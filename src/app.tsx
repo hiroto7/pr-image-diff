@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'preact/hooks';
-import { prHash, type PrRef } from './github';
+import { prHash, type PrRef, type RepoRef } from './github';
 import { MODES, type Mode } from './compare';
-import { Home } from './home';
+import { Home, RepoView } from './home';
 import { PrView } from './pr';
 import { getSavedMode, getToken, saveMode, saveToken } from './store';
 
-type Route = { name: 'home' } | { name: 'pr'; ref: PrRef; file: number | null };
+type Route = { name: 'home' } | { name: 'repo'; repo: RepoRef } | { name: 'pr'; ref: PrRef; file: number | null };
 
 function parseHash(): Route {
   const m = location.hash.match(/^#\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/f\/(\d+))?/);
-  if (!m) return { name: 'home' };
+  if (!m) {
+    const r = location.hash.match(/^#\/([^/]+)\/([^/]+)\/?$/);
+    return r ? { name: 'repo', repo: { owner: decodeURIComponent(r[1]), repo: decodeURIComponent(r[2]) } } : { name: 'home' };
+  }
   return {
     name: 'pr',
     ref: { owner: decodeURIComponent(m[1]), repo: decodeURIComponent(m[2]), number: Number(m[3]) },
@@ -48,6 +51,9 @@ export function App() {
         }}
       />
     );
+
+  if (route.name === 'repo')
+    return <RepoView key={`${route.repo.owner}/${route.repo.repo}`} repo={route.repo} token={token} />;
 
   const { ref } = route;
   return (

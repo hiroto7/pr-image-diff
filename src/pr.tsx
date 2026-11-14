@@ -59,7 +59,7 @@ export function PrView({ prRef, token, fileIndex, mode, setMode, onOpenFile, onN
     <>
       <header class="bar">
         <div class="bar-row">
-          <a class="icon-btn" href="#/" aria-label="ホームへ戻る">
+          <a class="icon-btn" href={`#/${prRef.owner}/${prRef.repo}`} aria-label="リポジトリの PR 一覧へ">
             ‹
           </a>
           <div class="bar-title">

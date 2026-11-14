@@ -9,12 +9,13 @@ GitHub の PR に含まれる画像差分（VRT スナップショットなど�
 
 ## 使い方
 
-1. PR の URL（または `owner/repo#123`）を貼って「開く」
+1. PR の URL（または `owner/repo#123`）を貼って「開く」。`owner/repo` だけ入れるとそのリポジトリの open な PR 一覧が開く
+   - 一度開いたリポジトリはホームに残り、その新しい PR がホームの「新しい PR」に並ぶので、次からは URL を打たずに選べる
 2. private リポジトリを見る場合は、ホームの「GitHub トークン」に Personal Access Token を保存する
    - fine-grained トークン: 対象リポジトリの **Contents: Read-only** と **Pull requests: Read-only**
    - classic トークン: `repo`
    - トークンはブラウザの localStorage にのみ保存され、`api.github.com` 以外には送信しない
-   - トークンを設定すると、自分が関係する open な PR がホームに一覧表示される
+   - トークンを設定すると、自分のリポジトリの PR と自分が関係する PR も「新しい PR」に並ぶ
 
 URL は `…/#/owner/repo/pull/123` の形なので、GitHub の PR URL の `https://github.com/` 以降をそのまま `#/` の後ろに付ければ開ける。`?url=<PR の URL>` でも開ける。Android ではホーム画面に追加すると、共有メニューからこのアプリに PR の URL を渡せる。
 

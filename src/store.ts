@@ -1,4 +1,4 @@
-import type { PrSummary } from './github';
+import type { PrSummary, RepoRef } from './github';
 
 // localStorage が使えない環境 (プライベートブラウズ等) でも落ちないようにする
 function read(key: string): string | null {
@@ -31,7 +31,37 @@ export function getRecents(): PrSummary[] {
   }
 }
 
+/** 最近見たリポジトリ (新しい順)。PR を開いたとき・リポジトリ画面を開いたときに記録する。 */
+export function getRecentRepos(): RepoRef[] {
+  let stored: RepoRef[] = [];
+  try {
+    stored = JSON.parse(read('repos') ?? '[]');
+  } catch {
+    /* 壊れていたら空扱い */
+  }
+  const seen = new Set<string>();
+  return [...stored, ...getRecents()]
+    .map(({ owner, repo }) => ({ owner, repo }))
+    .filter((r) => {
+      const k = `${r.owner}/${r.repo}`.toLowerCase();
+      return !seen.has(k) && !!seen.add(k);
+    })
+    .slice(0, 8);
+}
+
+export function addRecentRepo(repo: RepoRef) {
+  const same = (r: RepoRef) => r.owner === repo.owner && r.repo === repo.repo;
+  write('repos', JSON.stringify([repo, ...getRecentRepos().filter((r) => !same(r))].slice(0, 8)));
+}
+
+export function removeRecentRepo(repo: RepoRef) {
+  const same = (r: RepoRef) => r.owner === repo.owner && r.repo === repo.repo;
+  write('repos', JSON.stringify(getRecentRepos().filter((r) => !same(r))));
+  write('recents', JSON.stringify(getRecents().filter((r) => !same(r))));
+}
+
 export function addRecent(pr: PrSummary) {
+  addRecentRepo({ owner: pr.owner, repo: pr.repo });
   const same = (a: PrSummary) => a.owner === pr.owner && a.repo === pr.repo && a.number === pr.number;
   write('recents', JSON.stringify([pr, ...getRecents().filter((r) => !same(r))].slice(0, 12)));
 }

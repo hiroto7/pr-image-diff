@@ -1,8 +1,28 @@
 import { useEffect, useState } from 'preact/hooks';
-import { listMyPrs, parsePrRef, prHash, type PrSummary } from './github';
-import { getRecents } from './store';
+import {
+  listFeed,
+  listRepoPrs,
+  parsePrRef,
+  parseRepoRef,
+  prHash,
+  repoHash,
+  type PrSummary,
+  type RepoRef,
+} from './github';
+import { addRecentRepo, getRecentRepos, getRecents, removeRecentRepo } from './store';
 
-function PrList({ items }: { items: PrSummary[] }) {
+const rtf = new Intl.RelativeTimeFormat('ja', { numeric: 'auto' });
+function ago(iso: string): string {
+  const min = Math.round((Date.parse(iso) - Date.now()) / 60000);
+  if (Math.abs(min) < 60) return rtf.format(min, 'minute');
+  const hours = Math.round(min / 60);
+  if (Math.abs(hours) < 24) return rtf.format(hours, 'hour');
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 30) return rtf.format(days, 'day');
+  return rtf.format(Math.round(days / 30), 'month');
+}
+
+function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boolean }) {
   return (
     <ul class="pr-list">
       {items.map((p) => (
@@ -10,7 +30,14 @@ function PrList({ items }: { items: PrSummary[] }) {
           <a href={prHash(p)}>
             <div class="title">{p.title}</div>
             <div class="meta">
-              {p.owner}/{p.repo}#{p.number}
+              {[
+                showRepo ? `${p.owner}/${p.repo}#${p.number}` : `#${p.number}`,
+                p.author,
+                p.createdAt && ago(p.createdAt),
+                p.draft && 'Draft',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </div>
           </a>
         </li>
@@ -19,30 +46,52 @@ function PrList({ items }: { items: PrSummary[] }) {
   );
 }
 
-export function Home({ token, onToken }: { token: string; onToken: (t: string) => void }) {
-  const [input, setInput] = useState('');
-  const [inputError, setInputError] = useState('');
-  const [draft, setDraft] = useState('');
-  const [mine, setMine] = useState<{ items?: PrSummary[]; error?: string }>({});
-  const recents = getRecents();
+type Loadable = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ok'; items: PrSummary[] };
 
+function useLoad(load: () => Promise<PrSummary[]>, deps: unknown[]): [Loadable, () => void] {
+  const [state, setState] = useState<Loadable>({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!token) return setMine({});
     let alive = true;
-    listMyPrs(token).then(
-      (items) => alive && setMine({ items }),
-      (e) => alive && setMine({ error: e instanceof Error ? e.message : String(e) }),
+    setState({ status: 'loading' });
+    load().then(
+      (items) => alive && setState({ status: 'ok', items }),
+      (e) => alive && setState({ status: 'error', message: e instanceof Error ? e.message : String(e) }),
     );
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [...deps, attempt]);
+  return [state, () => setAttempt((a) => a + 1)];
+}
+
+function Loaded({ state, retry, empty, showRepo }: { state: Loadable; retry: () => void; empty: string; showRepo?: boolean }) {
+  if (state.status === 'loading') return <p class="meta">読み込み中…</p>;
+  if (state.status === 'error')
+    return (
+      <p class="error-text">
+        {state.message} <button onClick={retry}>再試行</button>
+      </p>
+    );
+  return state.items.length ? <PrList items={state.items} showRepo={showRepo} /> : <p class="meta">{empty}</p>;
+}
+
+export function Home({ token, onToken }: { token: string; onToken: (t: string) => void }) {
+  const [input, setInput] = useState('');
+  const [inputError, setInputError] = useState('');
+  const [draft, setDraft] = useState('');
+  const recents = getRecents();
+  const repos = getRecentRepos();
+  const hasFeed = !!token || repos.length > 0;
+  const [feed, retryFeed] = useLoad(() => listFeed(repos, token), [token, repos.map(repoHash).join()]);
 
   const open = (e: Event) => {
     e.preventDefault();
-    const ref = parsePrRef(input);
-    if (!ref) return setInputError('PR の URL か owner/repo#123 の形式で入力してください。');
-    location.hash = prHash(ref);
+    const pr = parsePrRef(input);
+    const repo = pr ? null : parseRepoRef(input);
+    if (pr) location.hash = prHash(pr);
+    else if (repo) location.hash = repoHash(repo);
+    else setInputError('PR の URL、owner/repo#123、または owner/repo の形式で入力してください。');
   };
 
   return (
@@ -57,8 +106,8 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
           autocapitalize="off"
           autocomplete="off"
           spellcheck={false}
-          placeholder="https://github.com/owner/repo/pull/123"
-          aria-label="PR の URL"
+          placeholder="PR の URL または owner/repo"
+          aria-label="PR の URL またはリポジトリ"
           value={input}
           onInput={(e) => {
             setInput((e.currentTarget as HTMLInputElement).value);
@@ -71,12 +120,23 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
       </form>
       {inputError && <p class="error-text">{inputError}</p>}
 
-      {token && (
+      {repos.length > 0 && (
         <section>
-          <h2>自分が関係する open な PR</h2>
-          {mine.error && <p class="error-text">{mine.error}</p>}
-          {!mine.error && !mine.items && <p class="meta">読み込み中…</p>}
-          {mine.items && (mine.items.length ? <PrList items={mine.items} /> : <p class="meta">ありません。</p>)}
+          <h2>リポジトリ</h2>
+          <div class="chips">
+            {repos.map((r) => (
+              <a class="chip" href={repoHash(r)}>
+                {r.owner}/{r.repo}
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {hasFeed && (
+        <section>
+          <h2>新しい PR{token ? '（自分のリポジトリ・関係する PR・最近見たリポジトリ）' : '（最近見たリポジトリ）'}</h2>
+          <Loaded state={feed} retry={retryFeed} empty="open な PR はありません。" />
         </section>
       )}
 
@@ -93,7 +153,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
           private リポジトリを見るには Personal Access Token が必要です。fine-grained トークンなら対象リポジトリの
           <b> Contents: Read-only </b>と<b> Pull requests: Read-only </b>
           を付けてください。トークンはこのブラウザの localStorage にだけ保存され、api.github.com 以外には送信しません。
-          未設定でも public リポジトリは表示できます。
+          未設定でも public リポジトリは表示できます。設定すると、自分のリポジトリや自分が関係する PR も一覧に出ます。
         </p>
         <p class="meta">
           <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
@@ -126,5 +186,45 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
         )}
       </details>
     </main>
+  );
+}
+
+/** 1 リポジトリの open な PR 一覧。開くと「最近見たリポジトリ」に入り、ホームの新着にも出るようになる。 */
+export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
+  const name = `${repo.owner}/${repo.repo}`;
+  const [state, retry] = useLoad(() => listRepoPrs(repo, token), [name, token]);
+  useEffect(() => {
+    if (state.status === 'ok') addRecentRepo(repo);
+  }, [state.status, name]);
+
+  return (
+    <>
+      <header class="bar">
+        <div class="bar-row">
+          <a class="icon-btn" href="#/" aria-label="ホームへ戻る">
+            ‹
+          </a>
+          <div class="bar-title">
+            <div class="title">{name}</div>
+            <div class="meta">open な PR（新しい順）</div>
+          </div>
+          <a class="icon-btn small" href={`https://github.com/${name}/pulls`} target="_blank" rel="noreferrer">
+            GitHub
+          </a>
+        </div>
+      </header>
+      <main class="home repo">
+        <Loaded state={state} retry={retry} empty="open な PR はありません。" showRepo={false} />
+        <button
+          class="danger"
+          onClick={() => {
+            removeRecentRepo(repo);
+            location.hash = '#/';
+          }}
+        >
+          このリポジトリをホームから外す
+        </button>
+      </main>
+    </>
   );
 }

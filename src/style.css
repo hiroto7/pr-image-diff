@@ -162,6 +162,28 @@ input[type='password'] {
 .pr-list a:active {
   background: var(--bg);
 }
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.home.repo {
+  padding-top: 12px;
+}
+.error-text button {
+  min-height: 32px;
+  color: var(--text);
+}
 .settings {
   margin-top: 32px;
   padding: 12px 14px;

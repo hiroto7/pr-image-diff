@@ -24,9 +24,16 @@ export interface PrFile {
   status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
 }
 
+export interface RepoRef {
+  owner: string;
+  repo: string;
+}
+
 export interface PrSummary extends PrRef {
   title: string;
-  updatedAt?: string;
+  createdAt?: string;
+  author?: string;
+  draft?: boolean;
 }
 
 export class GhError extends Error {
@@ -51,6 +58,16 @@ export function parsePrRef(input: string): PrRef | null {
   if (!m) return null;
   return { owner: m[1], repo: m[2], number: Number(m[3]) };
 }
+
+/** `owner/repo` またはリポジトリの URL を解釈する。 */
+export function parseRepoRef(input: string): RepoRef | null {
+  const s = input.trim();
+  const m =
+    s.match(new RegExp(`github\\.com/(${NAME})/(${NAME})/?(?:[?#].*)?$`, 'i')) ?? s.match(new RegExp(`^(${NAME})/(${NAME})$`));
+  return m ? { owner: m[1], repo: m[2].replace(/\.git$/, '') } : null;
+}
+
+export const repoHash = (r: RepoRef) => `#/${r.owner}/${r.repo}`;
 
 export function prHash(ref: PrRef, file?: number | null): string {
   const base = `#/${ref.owner}/${ref.repo}/pull/${ref.number}`;
@@ -204,19 +221,43 @@ export async function fetchBlob(src: ImgSrc, token: string): Promise<Blob> {
   return new Blob([blob], { type: mimeOf(src.path) });
 }
 
-/** 自分が関係する open な PR (作成・レビュー依頼・コメントなど)。 */
-export async function listMyPrs(token: string): Promise<PrSummary[]> {
-  const queries = ['is:pr is:open involves:@me', 'is:pr is:open review-requested:@me'];
-  const results = await Promise.all(
-    queries.map(async (q) => {
-      const res = await gh(`/search/issues?q=${encodeURIComponent(q)}&sort=updated&per_page=30`, token);
-      return ((await res.json()).items ?? []) as { html_url: string; title: string; updated_at: string }[];
+interface SearchItem {
+  html_url: string;
+  title: string;
+  created_at: string;
+  draft?: boolean;
+  user?: { login: string };
+}
+
+/**
+ * open な PR を検索して新しい順に返す。クエリは 1 つでも成功すれば結果を返し、
+ * 全滅したときだけ最初のエラーを投げる (アクセスできないリポジトリが混ざっていても一覧を出すため)。
+ */
+export async function searchOpenPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
+  const settled = await Promise.allSettled(
+    qualifiers.map(async (q) => {
+      const query = encodeURIComponent(`is:pr is:open ${q}`);
+      const res = await gh(`/search/issues?q=${query}&sort=created&order=desc&per_page=30`, token);
+      return ((await res.json()).items ?? []) as SearchItem[];
     }),
   );
+  const ok = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  if (!ok.length && settled.length) throw (settled[0] as PromiseRejectedResult).reason;
   const seen = new Map<string, PrSummary>();
-  for (const it of results.flat()) {
+  for (const it of ok.flat()) {
     const ref = parsePrRef(it.html_url);
-    if (ref && !seen.has(it.html_url)) seen.set(it.html_url, { ...ref, title: it.title, updatedAt: it.updated_at });
+    if (ref && !seen.has(it.html_url))
+      seen.set(it.html_url, { ...ref, title: it.title, createdAt: it.created_at, author: it.user?.login, draft: it.draft });
   }
-  return [...seen.values()].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+  return [...seen.values()].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
+
+/** ホームに出す新着 PR: 最近見たリポジトリ + (トークンがあれば) 自分のリポジトリと自分が関係する PR。 */
+export function listFeed(repos: RepoRef[], token: string): Promise<PrSummary[]> {
+  const qs: string[] = [];
+  if (repos.length) qs.push(repos.map((r) => `repo:${r.owner}/${r.repo}`).join(' '));
+  if (token) qs.push('user:@me', 'involves:@me', 'review-requested:@me');
+  return qs.length ? searchOpenPrs(qs, token) : Promise.resolve([]);
+}
+
+export const listRepoPrs = (repo: RepoRef, token: string) => searchOpenPrs([`repo:${repo.owner}/${repo.repo}`], token);
