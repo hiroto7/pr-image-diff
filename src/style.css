@@ -119,6 +119,9 @@ input[type='password'] {
   font-size: 13px;
   margin: 8px 0 0;
 }
+.refreshing {
+  margin: 0 0 6px;
+}
 .notice {
   margin: 20px 0 0;
   padding: 10px 14px;

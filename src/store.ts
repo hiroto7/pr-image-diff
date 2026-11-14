@@ -18,7 +18,25 @@ function write(key: string, value: string | null) {
 }
 
 export const getToken = () => read('gh_token') ?? '';
-export const saveToken = (t: string) => write('gh_token', t || null);
+export function saveToken(t: string) {
+  write('gh_token', t || null);
+  // トークンで取得した一覧 (private な PR のタイトルを含みうる) は、トークンを変えたら捨てる
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('list:')) localStorage.removeItem(k);
+  } catch {
+    /* 何もしない */
+  }
+}
+
+/** 前回取得した PR 一覧。次に開いたとき、再取得が終わるまでの表示に使う。 */
+export function getCachedList(key: string): PrSummary[] | null {
+  try {
+    return JSON.parse(read(`list:${key}`) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+export const setCachedList = (key: string, items: PrSummary[]) => write(`list:${key}`, JSON.stringify(items));
 
 export const getSavedMode = () => read('mode');
 export const saveMode = (m: string) => write('mode', m);

@@ -237,78 +237,72 @@ interface GqlPr {
 }
 
 const GQL_FILES = 100;
-const GQL_PR = `fragment pr on PullRequest {
-  number title url createdAt isDraft state changedFiles
-  author { login }
-  files(first: ${GQL_FILES}) { nodes { path } }
+const GQL_SEARCH = `query($q: String!) {
+  search(query: $q, type: ISSUE_ADVANCED, first: 50) {
+    nodes {
+      ... on PullRequest {
+        number title url createdAt isDraft state changedFiles
+        author { login }
+        files(first: ${GQL_FILES}) { nodes { path } }
+      }
+    }
+  }
 }`;
 
 /**
- * PR (open / merged / closed すべて) を検索して新しい順に返す。
+ * PR (open / merged / closed すべて) を検索して新しい順に最大 50 件返す。条件は OR で結合する。
  *
- * GraphQL を使うのは、複数の検索と各 PR の変更ファイル一覧を 1 リクエストで取れるため
+ * GraphQL を使うのは、検索と各 PR の変更ファイル一覧を 1 リクエストで取れるため
  * (PR ごとに API を呼ばずに画像の変更数がわかる)。GraphQL は認証必須なので、一覧にはトークンが要る。
- * クエリは 1 つでも成功すれば結果を返す (アクセスできないリポジトリが混ざっていても一覧を出すため)。
+ * 条件ごとに検索を分けて 1 リクエストに並べると直列に実行されて遅い (4 本で約 8 秒) ので、
+ * OR でつないだ 1 本の検索にしている (約 2 秒)。
  */
 export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
-  const queries = qualifiers.map((q) => `is:pr ${q}`);
-  const vars = queries.map((_, i) => `$q${i}: String!`).join(', ');
-  const fields = queries.map((_, i) => `q${i}: search(query: $q${i}, type: ISSUE, first: 30) { nodes { ...pr } }`);
+  const cond = qualifiers.length > 1 ? `(${qualifiers.join(' OR ')})` : qualifiers[0];
   let res: Response;
   try {
     res = await fetch(`${API}/graphql`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: `query(${vars}) {\n${fields.join('\n')}\n}\n${GQL_PR}`,
-        variables: Object.fromEntries(queries.map((q, i) => [`q${i}`, `${q} sort:created-desc`])),
-      }),
+      body: JSON.stringify({ query: GQL_SEARCH, variables: { q: `is:pr ${cond} sort:created-desc` } }),
     });
   } catch {
     throw new GhError('ネットワークエラーで取得できませんでした。', 0, true);
   }
   if (!res.ok) throw await toError(res, true);
   const body = (await res.json()) as {
-    data?: Record<string, { nodes: (GqlPr | null)[] } | null>;
+    data?: { search?: { nodes: (GqlPr | null)[] } | null };
     errors?: { message: string }[];
   };
-  const lists = queries.flatMap((_, i) => {
-    const nodes = body.data?.[`q${i}`]?.nodes;
-    return nodes ? [nodes] : [];
+  const nodes = body.data?.search?.nodes;
+  if (!nodes) throw new GhError(`GitHub API エラー ${body.errors?.[0]?.message ?? ''}`, 0, false);
+  return nodes.flatMap((n): PrSummary[] => {
+    const ref = n?.url ? parsePrRef(n.url) : null;
+    if (!n || !ref) return [];
+    const paths = n.files?.nodes.flatMap((f) => (f ? [f.path] : []));
+    const count = paths?.filter(isImage).length;
+    // 先頭 100 ファイルに画像がなく、まだ続きがある場合は「不明」
+    const images = count == null || (count === 0 && n.changedFiles > GQL_FILES) ? undefined : count;
+    return [
+      {
+        ...ref,
+        title: n.title,
+        createdAt: n.createdAt,
+        author: n.author?.login,
+        draft: n.isDraft,
+        state: n.state.toLowerCase() as PrSummary['state'],
+        images,
+      },
+    ];
   });
-  if (!lists.length) throw new GhError(`GitHub API エラー ${body.errors?.[0]?.message ?? ''}`, 0, false);
-  const found = lists.flat().flatMap((n): PrSummary[] => {
-      const ref = n?.url ? parsePrRef(n.url) : null;
-      if (!n || !ref) return [];
-      const paths = n.files?.nodes.flatMap((f) => (f ? [f.path] : []));
-      const count = paths?.filter(isImage).length;
-      // 先頭 100 ファイルに画像がなく、まだ続きがある場合は「不明」
-      const images = count == null || (count === 0 && n.changedFiles > GQL_FILES) ? undefined : count;
-      return [
-        {
-          ...ref,
-          title: n.title,
-          createdAt: n.createdAt,
-          author: n.author?.login,
-          draft: n.isDraft,
-          state: n.state.toLowerCase() as PrSummary['state'],
-          images,
-        },
-      ];
-  });
-  const seen = new Map<string, PrSummary>();
-  for (const p of found) {
-    const key = `${p.owner}/${p.repo}#${p.number}`.toLowerCase();
-    if (!seen.has(key)) seen.set(key, p);
-  }
-  return [...seen.values()].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
 
 /** ホームに出す新着 PR: 自分のリポジトリ、自分が関係する PR、最近見たリポジトリ。 */
 export function listFeed(repos: RepoRef[], token: string): Promise<PrSummary[]> {
-  const qs = ['user:@me', 'involves:@me', 'review-requested:@me'];
-  if (repos.length) qs.unshift(repos.map((r) => `repo:${r.owner}/${r.repo}`).join(' '));
-  return searchPrs(qs, token);
+  return searchPrs(
+    [...repos.map((r) => `repo:${r.owner}/${r.repo}`), 'user:@me', 'involves:@me', 'review-requested:@me'],
+    token,
+  );
 }
 
 export const listRepoPrs = (repo: RepoRef, token: string) => searchPrs([`repo:${repo.owner}/${repo.repo}`], token);

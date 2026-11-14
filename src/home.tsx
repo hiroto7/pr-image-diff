@@ -9,7 +9,7 @@ import {
   type PrSummary,
   type RepoRef,
 } from './github';
-import { addRecentRepo, getRecentRepos, getRecents, removeRecentRepo } from './store';
+import { addRecentRepo, getCachedList, getRecentRepos, getRecents, removeRecentRepo, setCachedList } from './store';
 
 const rtf = new Intl.RelativeTimeFormat('ja', { numeric: 'auto' });
 function ago(iso: string): string {
@@ -54,34 +54,56 @@ function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boo
 const NEED_TOKEN =
   'PR の一覧を出すには GitHub トークンの設定が必要です。PR の URL を指定して開く場合は、public リポジトリならトークンなしで表示できます。';
 
-type Loadable = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ok'; items: PrSummary[] };
+type Loadable =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  // refreshing: 前回の一覧を表示しつつ再取得中 / error: 再取得に失敗して前回の一覧を表示中
+  | { status: 'ok'; items: PrSummary[]; refreshing?: boolean; error?: string };
 
-function useLoad(load: () => Promise<PrSummary[]>, deps: unknown[]): [Loadable, () => void] {
-  const [state, setState] = useState<Loadable>({ status: 'loading' });
+/** cacheKey を渡すと、前回の結果をすぐ表示してから裏で取り直す。 */
+function useLoad(load: () => Promise<PrSummary[]>, deps: unknown[], cacheKey?: string): [Loadable, () => void] {
+  const initial = (): Loadable => {
+    const cached = cacheKey ? getCachedList(cacheKey) : null;
+    return cached ? { status: 'ok', items: cached, refreshing: true } : { status: 'loading' };
+  };
+  const [state, setState] = useState<Loadable>(initial);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
-    setState({ status: 'loading' });
+    const start = initial();
+    setState(start);
     load().then(
-      (items) => alive && setState({ status: 'ok', items }),
-      (e) => alive && setState({ status: 'error', message: e instanceof Error ? e.message : String(e) }),
+      (items) => {
+        if (cacheKey) setCachedList(cacheKey, items);
+        if (alive) setState({ status: 'ok', items });
+      },
+      (e) => {
+        const message = e instanceof Error ? e.message : String(e);
+        if (alive) setState(start.status === 'ok' ? { status: 'ok', items: start.items, error: message } : { status: 'error', message });
+      },
     );
     return () => {
       alive = false;
     };
-  }, [...deps, attempt]);
+  }, [...deps, cacheKey, attempt]);
   return [state, () => setAttempt((a) => a + 1)];
 }
 
 function Loaded({ state, retry, empty, showRepo }: { state: Loadable; retry: () => void; empty: string; showRepo?: boolean }) {
   if (state.status === 'loading') return <p class="meta">読み込み中…</p>;
-  if (state.status === 'error')
-    return (
-      <p class="error-text">
-        {state.message} <button onClick={retry}>再試行</button>
-      </p>
-    );
-  return state.items.length ? <PrList items={state.items} showRepo={showRepo} /> : <p class="meta">{empty}</p>;
+  const error = state.status === 'error' ? state.message : state.error;
+  return (
+    <>
+      {error && (
+        <p class="error-text">
+          {error} <button onClick={retry}>再試行</button>
+        </p>
+      )}
+      {state.status === 'ok' && state.refreshing && <p class="meta refreshing">更新中…</p>}
+      {state.status === 'ok' &&
+        (state.items.length ? <PrList items={state.items} showRepo={showRepo} /> : <p class="meta">{empty}</p>)}
+    </>
+  );
 }
 
 export function Home({ token, onToken }: { token: string; onToken: (t: string) => void }) {
@@ -93,6 +115,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
   const [feed, retryFeed] = useLoad(
     () => (token ? listFeed(repos, token) : Promise.resolve([])),
     [token, repos.map(repoHash).join()],
+    token ? 'feed' : undefined,
   );
 
   const open = (e: Event) => {
@@ -204,7 +227,10 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
 /** 1 リポジトリの PR 一覧。開くと「最近見たリポジトリ」に入り、ホームの新着にも出るようになる。 */
 export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
   const name = `${repo.owner}/${repo.repo}`;
-  const [state, retry] = useLoad(() => (token ? listRepoPrs(repo, token) : Promise.resolve([])), [name, token]);
+  const [state, retry] = useLoad(() => (token ? listRepoPrs(repo, token) : Promise.resolve([])),
+    [name, token],
+    token ? `repo:${name}` : undefined,
+  );
   useEffect(() => {
     if (token && state.status === 'ok') addRecentRepo(repo);
   }, [state.status, name, token]);
@@ -218,7 +244,7 @@ export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
           </a>
           <div class="bar-title">
             <div class="title">{name}</div>
-            <div class="meta">PR（新しい順・最大 30 件）</div>
+            <div class="meta">PR（新しい順・最大 50 件）</div>
           </div>
           <a class="icon-btn small" href={`https://github.com/${name}/pulls`} target="_blank" rel="noreferrer">
             GitHub

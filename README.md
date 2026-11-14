@@ -20,7 +20,7 @@ GitHub の PR に含まれる画像差分（VRT スナップショットなど�
 
 ### API の使い分け
 
-- PR の一覧: GraphQL。複数の検索と各 PR の変更ファイル一覧を 1 リクエストで取れるので、PR の数だけ API を呼ばずに済む。GraphQL は認証必須なので一覧にはトークンが要る
+- PR の一覧: GraphQL。検索と各 PR の変更ファイル一覧を 1 リクエストで取れるので、PR の数だけ API を呼ばずに済む。GraphQL は認証必須なので一覧にはトークンが要る
 - PR 1 件の表示: REST。public リポジトリならトークンなしで動く（画像は `raw.githubusercontent.com` から取得）
 
 URL は `…/#/owner/repo/pull/123` の形なので、GitHub の PR URL の `https://github.com/` 以降をそのまま `#/` の後ろに付ければ開ける。`?url=<PR の URL>` でも開ける。
