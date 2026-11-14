@@ -237,8 +237,10 @@ interface GqlPr {
 }
 
 const GQL_FILES = 100;
-const GQL_SEARCH = `query($q: String!) {
-  search(query: $q, type: ISSUE_ADVANCED, first: 50) {
+/** PR 一覧で 1 回に取得する件数 */
+export const LIST_SIZE = 20;
+const GQL_SEARCH = `query($q: String!, $n: Int!) {
+  search(query: $q, type: ISSUE, first: $n) {
     nodes {
       ... on PullRequest {
         number title url createdAt isDraft state changedFiles
@@ -250,21 +252,21 @@ const GQL_SEARCH = `query($q: String!) {
 }`;
 
 /**
- * PR (open / merged / closed すべて) を検索して新しい順に最大 50 件返す。条件は OR で結合する。
+ * リポジトリの PR (open / merged / closed すべて) を新しい順に LIST_SIZE 件返す。
  *
  * GraphQL を使うのは、検索と各 PR の変更ファイル一覧を 1 リクエストで取れるため
  * (PR ごとに API を呼ばずに画像の変更数がわかる)。GraphQL は認証必須なので、一覧にはトークンが要る。
- * 条件ごとに検索を分けて 1 リクエストに並べると直列に実行されて遅い (4 本で約 8 秒) ので、
- * OR でつないだ 1 本の検索にしている (約 2 秒)。
  */
-export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
-  const cond = qualifiers.length > 1 ? `(${qualifiers.join(' OR ')})` : qualifiers[0];
+export async function listRepoPrs(repo: RepoRef, token: string): Promise<PrSummary[]> {
   let res: Response;
   try {
     res = await fetch(`${API}/graphql`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: GQL_SEARCH, variables: { q: `is:pr ${cond} sort:created-desc` } }),
+      body: JSON.stringify({
+        query: GQL_SEARCH,
+        variables: { q: `is:pr repo:${repo.owner}/${repo.repo} sort:created-desc`, n: LIST_SIZE },
+      }),
     });
   } catch {
     throw new GhError('ネットワークエラーで取得できませんでした。', 0, true);
@@ -296,13 +298,3 @@ export async function searchPrs(qualifiers: string[], token: string): Promise<Pr
     ];
   });
 }
-
-/** ホームに出す新着 PR: 自分のリポジトリ、自分が関係する PR、最近見たリポジトリ。 */
-export function listFeed(repos: RepoRef[], token: string): Promise<PrSummary[]> {
-  return searchPrs(
-    [...repos.map((r) => `repo:${r.owner}/${r.repo}`), 'user:@me', 'involves:@me', 'review-requested:@me'],
-    token,
-  );
-}
-
-export const listRepoPrs = (repo: RepoRef, token: string) => searchPrs([`repo:${repo.owner}/${repo.repo}`], token);

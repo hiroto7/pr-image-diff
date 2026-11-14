@@ -182,20 +182,14 @@ input[type='password'] {
 .pr-list a:active {
   background: var(--bg);
 }
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.repo-row {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
-.chip {
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: inherit;
-  text-decoration: none;
-  font-size: 13px;
-  overflow-wrap: anywhere;
+.repo-row .meta {
+  flex: none;
 }
 .home.repo {
   padding-top: 12px;

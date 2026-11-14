@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import {
-  listFeed,
+  LIST_SIZE,
   listRepoPrs,
   parsePrRef,
   parseRepoRef,
@@ -52,7 +52,7 @@ function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boo
 }
 
 const NEED_TOKEN =
-  'PR の一覧を出すには GitHub トークンの設定が必要です。PR の URL を指定して開く場合は、public リポジトリならトークンなしで表示できます。';
+  'リポジトリの PR 一覧を出すには GitHub トークンの設定が必要です。PR の URL を指定して開く場合は、public リポジトリならトークンなしで表示できます。';
 
 type Loadable =
   | { status: 'loading' }
@@ -112,11 +112,6 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
   const [draft, setDraft] = useState('');
   const recents = getRecents();
   const repos = getRecentRepos();
-  const [feed, retryFeed] = useLoad(
-    () => (token ? listFeed(repos, token) : Promise.resolve([])),
-    [token, repos.map(repoHash).join()],
-    token ? 'feed' : undefined,
-  );
 
   const open = (e: Event) => {
     e.preventDefault();
@@ -155,25 +150,23 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
 
       {token && repos.length > 0 && (
         <section>
-          <h2>リポジトリ</h2>
-          <div class="chips">
+          <h2>最近見たリポジトリ</h2>
+          <ul class="pr-list">
             {repos.map((r) => (
-              <a class="chip" href={repoHash(r)}>
-                {r.owner}/{r.repo}
-              </a>
+              <li>
+                <a class="repo-row" href={repoHash(r)}>
+                  <span class="title">
+                    {r.owner}/{r.repo}
+                  </span>
+                  <span class="meta">PR 一覧 ›</span>
+                </a>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
       )}
 
       {!token && <p class="notice">{NEED_TOKEN}</p>}
-
-      {token && (
-        <section>
-          <h2>新しい PR（自分のリポジトリ・関係する PR・最近見たリポジトリ）</h2>
-          <Loaded state={feed} retry={retryFeed} empty="PR はありません。" />
-        </section>
-      )}
 
       {recents.length > 0 && (
         <section>
@@ -188,7 +181,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
           private リポジトリを見るには Personal Access Token が必要です。fine-grained トークンなら対象リポジトリの
           <b> Contents: Read-only </b>と<b> Pull requests: Read-only </b>
           を付けてください。トークンはこのブラウザの localStorage にだけ保存され、api.github.com 以外には送信しません。
-          未設定でも、public リポジトリの PR は URL を指定すれば表示できます。PR の一覧を出すにはトークンが必要です。
+          未設定でも、public リポジトリの PR は URL を指定すれば表示できます。リポジトリの PR 一覧を出すにはトークンが必要です。
         </p>
         <p class="meta">
           <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
@@ -244,7 +237,7 @@ export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
           </a>
           <div class="bar-title">
             <div class="title">{name}</div>
-            <div class="meta">PR（新しい順・最大 50 件）</div>
+            <div class="meta">PR（新しい順・最新 {LIST_SIZE} 件）</div>
           </div>
           <a class="icon-btn small" href={`https://github.com/${name}/pulls`} target="_blank" rel="noreferrer">
             GitHub
