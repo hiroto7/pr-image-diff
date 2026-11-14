@@ -22,6 +22,8 @@ function ago(iso: string): string {
   return rtf.format(Math.round(days / 30), 'month');
 }
 
+const STATE_LABEL = { open: 'Open', merged: 'Merged', closed: 'Closed' };
+
 function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boolean }) {
   return (
     <ul class="pr-list">
@@ -30,11 +32,12 @@ function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boo
           <a href={prHash(p)}>
             <div class="title">{p.title}</div>
             <div class="meta">
+              {p.state && <span class={`badge st-${p.state}`}>{STATE_LABEL[p.state]}</span>}{' '}
               {[
                 showRepo ? `${p.owner}/${p.repo}#${p.number}` : `#${p.number}`,
                 p.author,
                 p.createdAt && ago(p.createdAt),
-                p.draft && 'Draft',
+                p.draft && p.state === 'open' && 'Draft',
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -136,7 +139,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
       {hasFeed && (
         <section>
           <h2>新しい PR{token ? '（自分のリポジトリ・関係する PR・最近見たリポジトリ）' : '（最近見たリポジトリ）'}</h2>
-          <Loaded state={feed} retry={retryFeed} empty="open な PR はありません。" />
+          <Loaded state={feed} retry={retryFeed} empty="PR はありません。" />
         </section>
       )}
 
@@ -189,7 +192,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
   );
 }
 
-/** 1 リポジトリの open な PR 一覧。開くと「最近見たリポジトリ」に入り、ホームの新着にも出るようになる。 */
+/** 1 リポジトリの PR 一覧。開くと「最近見たリポジトリ」に入り、ホームの新着にも出るようになる。 */
 export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
   const name = `${repo.owner}/${repo.repo}`;
   const [state, retry] = useLoad(() => listRepoPrs(repo, token), [name, token]);
@@ -206,7 +209,7 @@ export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
           </a>
           <div class="bar-title">
             <div class="title">{name}</div>
-            <div class="meta">open な PR（新しい順）</div>
+            <div class="meta">PR（新しい順・最大 30 件）</div>
           </div>
           <a class="icon-btn small" href={`https://github.com/${name}/pulls`} target="_blank" rel="noreferrer">
             GitHub
@@ -214,7 +217,7 @@ export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
         </div>
       </header>
       <main class="home repo">
-        <Loaded state={state} retry={retry} empty="open な PR はありません。" showRepo={false} />
+        <Loaded state={state} retry={retry} empty="PR はありません。" showRepo={false} />
         <button
           class="danger"
           onClick={() => {

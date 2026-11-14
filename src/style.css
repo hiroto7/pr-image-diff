@@ -11,6 +11,7 @@
   --green: #1a7f37;
   --amber: #9a6700;
   --hot: #bf3989;
+  --purple: #8250df;
   --check-a: #ffffff;
   --check-b: #e6e9ec;
 }
@@ -27,6 +28,7 @@
     --green: #3fb950;
     --amber: #d29922;
     --hot: #f778ba;
+    --purple: #ab7df8;
     --check-a: #22272e;
     --check-b: #2d333b;
   }
@@ -311,8 +313,15 @@ input[type='password'] {
 .badge.added {
   color: var(--green);
 }
-.badge.removed {
+.badge.removed,
+.badge.st-closed {
   color: var(--red);
+}
+.badge.st-open {
+  color: var(--green);
+}
+.badge.st-merged {
+  color: var(--purple);
 }
 .hot {
   color: var(--hot);

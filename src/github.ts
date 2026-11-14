@@ -34,6 +34,7 @@ export interface PrSummary extends PrRef {
   createdAt?: string;
   author?: string;
   draft?: boolean;
+  state?: 'open' | 'merged' | 'closed';
 }
 
 export class GhError extends Error {
@@ -226,17 +227,19 @@ interface SearchItem {
   title: string;
   created_at: string;
   draft?: boolean;
+  state: string;
+  pull_request?: { merged_at?: string | null };
   user?: { login: string };
 }
 
 /**
- * open な PR を検索して新しい順に返す。クエリは 1 つでも成功すれば結果を返し、
+ * PR (open / merged / closed すべて) を検索して新しい順に返す。クエリは 1 つでも成功すれば結果を返し、
  * 全滅したときだけ最初のエラーを投げる (アクセスできないリポジトリが混ざっていても一覧を出すため)。
  */
-export async function searchOpenPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
+export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
   const settled = await Promise.allSettled(
     qualifiers.map(async (q) => {
-      const query = encodeURIComponent(`is:pr is:open ${q}`);
+      const query = encodeURIComponent(`is:pr ${q}`);
       const res = await gh(`/search/issues?q=${query}&sort=created&order=desc&per_page=30`, token);
       return ((await res.json()).items ?? []) as SearchItem[];
     }),
@@ -247,7 +250,14 @@ export async function searchOpenPrs(qualifiers: string[], token: string): Promis
   for (const it of ok.flat()) {
     const ref = parsePrRef(it.html_url);
     if (ref && !seen.has(it.html_url))
-      seen.set(it.html_url, { ...ref, title: it.title, createdAt: it.created_at, author: it.user?.login, draft: it.draft });
+      seen.set(it.html_url, {
+        ...ref,
+        title: it.title,
+        createdAt: it.created_at,
+        author: it.user?.login,
+        draft: it.draft,
+        state: it.state === 'open' ? 'open' : it.pull_request?.merged_at ? 'merged' : 'closed',
+      });
   }
   return [...seen.values()].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
@@ -257,7 +267,7 @@ export function listFeed(repos: RepoRef[], token: string): Promise<PrSummary[]> 
   const qs: string[] = [];
   if (repos.length) qs.push(repos.map((r) => `repo:${r.owner}/${r.repo}`).join(' '));
   if (token) qs.push('user:@me', 'involves:@me', 'review-requested:@me');
-  return qs.length ? searchOpenPrs(qs, token) : Promise.resolve([]);
+  return qs.length ? searchPrs(qs, token) : Promise.resolve([]);
 }
 
-export const listRepoPrs = (repo: RepoRef, token: string) => searchOpenPrs([`repo:${repo.owner}/${repo.repo}`], token);
+export const listRepoPrs = (repo: RepoRef, token: string) => searchPrs([`repo:${repo.owner}/${repo.repo}`], token);
