@@ -35,7 +35,7 @@ export interface PrSummary extends PrRef {
   author?: string;
   draft?: boolean;
   state?: 'open' | 'merged' | 'closed';
-  /** 画像の変更数。わからないときは undefined (トークンがあるときだけ取得できる) */
+  /** 画像の変更数。わからないときは undefined */
   images?: number;
 }
 
@@ -224,42 +224,6 @@ export async function fetchBlob(src: ImgSrc, token: string): Promise<Blob> {
   return new Blob([blob], { type: mimeOf(src.path) });
 }
 
-interface SearchItem {
-  html_url: string;
-  title: string;
-  created_at: string;
-  draft?: boolean;
-  state: string;
-  pull_request?: { merged_at?: string | null };
-  user?: { login: string };
-}
-
-async function searchRest(queries: string[]): Promise<PrSummary[][]> {
-  const settled = await Promise.allSettled(
-    queries.map(async (q) => {
-      const res = await gh(`/search/issues?q=${encodeURIComponent(q)}&sort=created&order=desc&per_page=30`, '');
-      const items = ((await res.json()).items ?? []) as SearchItem[];
-      return items.flatMap((it): PrSummary[] => {
-        const ref = parsePrRef(it.html_url);
-        if (!ref) return [];
-        return [
-          {
-            ...ref,
-            title: it.title,
-            createdAt: it.created_at,
-            author: it.user?.login,
-            draft: it.draft,
-            state: it.state === 'open' ? 'open' : it.pull_request?.merged_at ? 'merged' : 'closed',
-          },
-        ];
-      });
-    }),
-  );
-  const ok = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
-  if (!ok.length && settled.length) throw (settled[0] as PromiseRejectedResult).reason;
-  return ok;
-}
-
 interface GqlPr {
   number?: number;
   title: string;
@@ -280,10 +244,14 @@ const GQL_PR = `fragment pr on PullRequest {
 }`;
 
 /**
- * GraphQL なら、複数の検索と各 PR の変更ファイル一覧を 1 リクエストで取れる
- * (PR ごとに API を呼ばずに画像の変更数がわかる)。GraphQL は認証必須なのでトークンがあるときだけ使う。
+ * PR (open / merged / closed すべて) を検索して新しい順に返す。
+ *
+ * GraphQL を使うのは、複数の検索と各 PR の変更ファイル一覧を 1 リクエストで取れるため
+ * (PR ごとに API を呼ばずに画像の変更数がわかる)。GraphQL は認証必須なので、一覧にはトークンが要る。
+ * クエリは 1 つでも成功すれば結果を返す (アクセスできないリポジトリが混ざっていても一覧を出すため)。
  */
-async function searchGraphql(queries: string[], token: string): Promise<PrSummary[][]> {
+export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
+  const queries = qualifiers.map((q) => `is:pr ${q}`);
   const vars = queries.map((_, i) => `$q${i}: String!`).join(', ');
   const fields = queries.map((_, i) => `q${i}: search(query: $q${i}, type: ISSUE, first: 30) { nodes { ...pr } }`);
   let res: Response;
@@ -309,8 +277,7 @@ async function searchGraphql(queries: string[], token: string): Promise<PrSummar
     return nodes ? [nodes] : [];
   });
   if (!lists.length) throw new GhError(`GitHub API エラー ${body.errors?.[0]?.message ?? ''}`, 0, false);
-  return lists.map((nodes) =>
-    nodes.flatMap((n): PrSummary[] => {
+  const found = lists.flat().flatMap((n): PrSummary[] => {
       const ref = n?.url ? parsePrRef(n.url) : null;
       if (!n || !ref) return [];
       const paths = n.files?.nodes.flatMap((f) => (f ? [f.path] : []));
@@ -328,31 +295,20 @@ async function searchGraphql(queries: string[], token: string): Promise<PrSummar
           images,
         },
       ];
-    }),
-  );
-}
-
-/**
- * PR (open / merged / closed すべて) を検索して新しい順に返す。クエリは 1 つでも成功すれば結果を返す
- * (アクセスできないリポジトリが混ざっていても一覧を出すため)。
- */
-export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
-  const queries = qualifiers.map((q) => `is:pr ${q}`);
-  const lists = token ? await searchGraphql(queries, token) : await searchRest(queries);
+  });
   const seen = new Map<string, PrSummary>();
-  for (const p of lists.flat()) {
+  for (const p of found) {
     const key = `${p.owner}/${p.repo}#${p.number}`.toLowerCase();
     if (!seen.has(key)) seen.set(key, p);
   }
   return [...seen.values()].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
 
-/** ホームに出す新着 PR: 最近見たリポジトリ + (トークンがあれば) 自分のリポジトリと自分が関係する PR。 */
+/** ホームに出す新着 PR: 自分のリポジトリ、自分が関係する PR、最近見たリポジトリ。 */
 export function listFeed(repos: RepoRef[], token: string): Promise<PrSummary[]> {
-  const qs: string[] = [];
-  if (repos.length) qs.push(repos.map((r) => `repo:${r.owner}/${r.repo}`).join(' '));
-  if (token) qs.push('user:@me', 'involves:@me', 'review-requested:@me');
-  return qs.length ? searchPrs(qs, token) : Promise.resolve([]);
+  const qs = ['user:@me', 'involves:@me', 'review-requested:@me'];
+  if (repos.length) qs.unshift(repos.map((r) => `repo:${r.owner}/${r.repo}`).join(' '));
+  return searchPrs(qs, token);
 }
 
 export const listRepoPrs = (repo: RepoRef, token: string) => searchPrs([`repo:${repo.owner}/${repo.repo}`], token);

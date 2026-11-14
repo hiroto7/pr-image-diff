@@ -51,6 +51,9 @@ function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boo
   );
 }
 
+const NEED_TOKEN =
+  'PR の一覧を出すには GitHub トークンの設定が必要です。PR の URL を指定して開く場合は、public リポジトリならトークンなしで表示できます。';
+
 type Loadable = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ok'; items: PrSummary[] };
 
 function useLoad(load: () => Promise<PrSummary[]>, deps: unknown[]): [Loadable, () => void] {
@@ -87,8 +90,10 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
   const [draft, setDraft] = useState('');
   const recents = getRecents();
   const repos = getRecentRepos();
-  const hasFeed = !!token || repos.length > 0;
-  const [feed, retryFeed] = useLoad(() => listFeed(repos, token), [token, repos.map(repoHash).join()]);
+  const [feed, retryFeed] = useLoad(
+    () => (token ? listFeed(repos, token) : Promise.resolve([])),
+    [token, repos.map(repoHash).join()],
+  );
 
   const open = (e: Event) => {
     e.preventDefault();
@@ -125,7 +130,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
       </form>
       {inputError && <p class="error-text">{inputError}</p>}
 
-      {repos.length > 0 && (
+      {token && repos.length > 0 && (
         <section>
           <h2>リポジトリ</h2>
           <div class="chips">
@@ -138,9 +143,11 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
         </section>
       )}
 
-      {hasFeed && (
+      {!token && <p class="notice">{NEED_TOKEN}</p>}
+
+      {token && (
         <section>
-          <h2>新しい PR{token ? '（自分のリポジトリ・関係する PR・最近見たリポジトリ）' : '（最近見たリポジトリ）'}</h2>
+          <h2>新しい PR（自分のリポジトリ・関係する PR・最近見たリポジトリ）</h2>
           <Loaded state={feed} retry={retryFeed} empty="PR はありません。" />
         </section>
       )}
@@ -158,7 +165,7 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
           private リポジトリを見るには Personal Access Token が必要です。fine-grained トークンなら対象リポジトリの
           <b> Contents: Read-only </b>と<b> Pull requests: Read-only </b>
           を付けてください。トークンはこのブラウザの localStorage にだけ保存され、api.github.com 以外には送信しません。
-          未設定でも public リポジトリは表示できます。設定すると、自分のリポジトリや自分が関係する PR も一覧に出ます。
+          未設定でも、public リポジトリの PR は URL を指定すれば表示できます。PR の一覧を出すにはトークンが必要です。
         </p>
         <p class="meta">
           <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
@@ -197,10 +204,10 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
 /** 1 リポジトリの PR 一覧。開くと「最近見たリポジトリ」に入り、ホームの新着にも出るようになる。 */
 export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
   const name = `${repo.owner}/${repo.repo}`;
-  const [state, retry] = useLoad(() => listRepoPrs(repo, token), [name, token]);
+  const [state, retry] = useLoad(() => (token ? listRepoPrs(repo, token) : Promise.resolve([])), [name, token]);
   useEffect(() => {
-    if (state.status === 'ok') addRecentRepo(repo);
-  }, [state.status, name]);
+    if (token && state.status === 'ok') addRecentRepo(repo);
+  }, [state.status, name, token]);
 
   return (
     <>
@@ -219,7 +226,13 @@ export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
         </div>
       </header>
       <main class="home repo">
-        <Loaded state={state} retry={retry} empty="PR はありません。" showRepo={false} />
+        {token ? (
+          <Loaded state={state} retry={retry} empty="PR はありません。" showRepo={false} />
+        ) : (
+          <p class="notice">
+            {NEED_TOKEN} <a href="#/">ホームで設定する</a>
+          </p>
+        )}
         <button
           class="danger"
           onClick={() => {

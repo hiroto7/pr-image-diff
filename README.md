@@ -9,14 +9,19 @@ GitHub の PR に含まれる画像差分（VRT スナップショットなど�
 
 ## 使い方
 
-1. PR の URL（または `owner/repo#123`）を貼って「開く」。`owner/repo` だけ入れるとそのリポジトリの PR 一覧（open / merged / closed）が開く
-   - 一度開いたリポジトリはホームに残り、その新しい PR がホームの「新しい PR」に並ぶので、次からは URL を打たずに選べる
-2. private リポジトリを見る場合は、ホームの「GitHub トークン」に Personal Access Token を保存する
+1. PR の URL（または `owner/repo#123`）を貼って「開く」。public リポジトリの PR ならトークンなしで見られる
+2. ホームの「GitHub トークン」に Personal Access Token を保存すると、private リポジトリの PR と、PR の一覧が使える
    - fine-grained トークン: 対象リポジトリの **Contents: Read-only** と **Pull requests: Read-only**
    - classic トークン: `repo`
    - トークンはブラウザの localStorage にのみ保存され、`api.github.com` 以外には送信しない
-   - トークンを設定すると、自分のリポジトリの PR と自分が関係する PR も「新しい PR」に並ぶ
-   - トークンがあるときは一覧に画像の変更数（「画像 12」）が付き、画像の変更がない PR はグレーアウトされる。検索と変更ファイルの取得を GraphQL の 1 リクエストにまとめているので、PR の数だけ API を呼ぶことはない
+3. トークンがあると、ホームの「新しい PR」に自分のリポジトリの PR・自分が関係する PR・最近見たリポジトリの PR（open / merged / closed）が新しい順に並ぶ
+   - 各 PR に画像の変更数（「画像 12」）が付き、画像の変更がない PR はグレーアウトされる
+   - `owner/repo` を入力するか、ホームのリポジトリ名をタップすると、そのリポジトリの PR 一覧が開く
+
+### API の使い分け
+
+- PR の一覧: GraphQL。複数の検索と各 PR の変更ファイル一覧を 1 リクエストで取れるので、PR の数だけ API を呼ばずに済む。GraphQL は認証必須なので一覧にはトークンが要る
+- PR 1 件の表示: REST。public リポジトリならトークンなしで動く（画像は `raw.githubusercontent.com` から取得）
 
 URL は `…/#/owner/repo/pull/123` の形なので、GitHub の PR URL の `https://github.com/` 以降をそのまま `#/` の後ろに付ければ開ける。`?url=<PR の URL>` でも開ける。
 
