@@ -161,12 +161,6 @@ input[type='password'] {
   color: inherit;
   text-decoration: none;
 }
-.pr-list li.dim a {
-  opacity: 0.45;
-}
-.has-images {
-  color: var(--accent);
-}
 .pr-list a:active {
   background: var(--bg);
 }

@@ -65,29 +65,3 @@ export function addRecent(pr: PrSummary) {
   const same = (a: PrSummary) => a.owner === pr.owner && a.repo === pr.repo && a.number === pr.number;
   write('recents', JSON.stringify([pr, ...getRecents().filter((r) => !same(r))].slice(0, 12)));
 }
-
-// PR ごとの画像変更数のキャッシュ。PR の更新日時が変わったら無効。
-type CountCache = Record<string, { u: string; c: number }>;
-
-function readCounts(): CountCache {
-  try {
-    return JSON.parse(read('imgcounts') ?? '{}');
-  } catch {
-    return {};
-  }
-}
-
-/** updatedAt を渡さない場合は、古いかもしれないキャッシュでも返す。 */
-export function getCachedCount(key: string, updatedAt?: string): number | null {
-  const e = readCounts()[key];
-  return e && (!updatedAt || e.u === updatedAt) ? e.c : null;
-}
-
-export function setCachedCount(key: string, updatedAt: string, count: number) {
-  const all = readCounts();
-  delete all[key];
-  all[key] = { u: updatedAt, c: count };
-  const keys = Object.keys(all);
-  for (const k of keys.slice(0, Math.max(0, keys.length - 400))) delete all[k];
-  write('imgcounts', JSON.stringify(all));
-}

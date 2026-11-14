@@ -9,7 +9,6 @@ import {
   type PrSummary,
   type RepoRef,
 } from './github';
-import { imageCount } from './imagecount';
 import { addRecentRepo, getRecentRepos, getRecents, removeRecentRepo } from './store';
 
 const rtf = new Intl.RelativeTimeFormat('ja', { numeric: 'auto' });
@@ -25,44 +24,26 @@ function ago(iso: string): string {
 
 const STATE_LABEL = { open: 'Open', merged: 'Merged', closed: 'Closed' };
 
-function PrItem({ p, showRepo, token }: { p: PrSummary; showRepo: boolean; token: string }) {
-  // undefined: 調査中 / null: 不明 / 数値: 画像の変更数
-  const [images, setImages] = useState<number | null | undefined>(undefined);
-  useEffect(() => {
-    let alive = true;
-    setImages(undefined);
-    imageCount(p, token).then((n) => alive && setImages(n));
-    return () => {
-      alive = false;
-    };
-  }, [p.owner, p.repo, p.number, p.updatedAt, token]);
-
-  return (
-    <li class={images === 0 ? 'dim' : ''}>
-      <a href={prHash(p)}>
-        <div class="title">{p.title}</div>
-        <div class="meta">
-          {p.state && <span class={`badge st-${p.state}`}>{STATE_LABEL[p.state]}</span>}{' '}
-          {[
-            showRepo ? `${p.owner}/${p.repo}#${p.number}` : `#${p.number}`,
-            p.author,
-            p.createdAt && ago(p.createdAt),
-            p.draft && p.state === 'open' && 'Draft',
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-          {images != null && (images > 0 ? <strong class="has-images"> · 画像 {images}</strong> : ' · 画像なし')}
-        </div>
-      </a>
-    </li>
-  );
-}
-
-function PrList({ items, token, showRepo = true }: { items: PrSummary[]; token: string; showRepo?: boolean }) {
+function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boolean }) {
   return (
     <ul class="pr-list">
       {items.map((p) => (
-        <PrItem key={`${p.owner}/${p.repo}#${p.number}`} p={p} showRepo={showRepo} token={token} />
+        <li>
+          <a href={prHash(p)}>
+            <div class="title">{p.title}</div>
+            <div class="meta">
+              {p.state && <span class={`badge st-${p.state}`}>{STATE_LABEL[p.state]}</span>}{' '}
+              {[
+                showRepo ? `${p.owner}/${p.repo}#${p.number}` : `#${p.number}`,
+                p.author,
+                p.createdAt && ago(p.createdAt),
+                p.draft && p.state === 'open' && 'Draft',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          </a>
+        </li>
       ))}
     </ul>
   );
@@ -87,8 +68,7 @@ function useLoad(load: () => Promise<PrSummary[]>, deps: unknown[]): [Loadable, 
   return [state, () => setAttempt((a) => a + 1)];
 }
 
-function Loaded(props: { state: Loadable; retry: () => void; empty: string; token: string; showRepo?: boolean }) {
-  const { state, retry, empty, token, showRepo } = props;
+function Loaded({ state, retry, empty, showRepo }: { state: Loadable; retry: () => void; empty: string; showRepo?: boolean }) {
   if (state.status === 'loading') return <p class="meta">読み込み中…</p>;
   if (state.status === 'error')
     return (
@@ -96,7 +76,7 @@ function Loaded(props: { state: Loadable; retry: () => void; empty: string; toke
         {state.message} <button onClick={retry}>再試行</button>
       </p>
     );
-  return state.items.length ? <PrList items={state.items} token={token} showRepo={showRepo} /> : <p class="meta">{empty}</p>;
+  return state.items.length ? <PrList items={state.items} showRepo={showRepo} /> : <p class="meta">{empty}</p>;
 }
 
 export function Home({ token, onToken }: { token: string; onToken: (t: string) => void }) {
@@ -159,14 +139,14 @@ export function Home({ token, onToken }: { token: string; onToken: (t: string) =
       {hasFeed && (
         <section>
           <h2>新しい PR{token ? '（自分のリポジトリ・関係する PR・最近見たリポジトリ）' : '（最近見たリポジトリ）'}</h2>
-          <Loaded state={feed} retry={retryFeed} empty="PR はありません。" token={token} />
+          <Loaded state={feed} retry={retryFeed} empty="PR はありません。" />
         </section>
       )}
 
       {recents.length > 0 && (
         <section>
           <h2>最近開いた PR</h2>
-          <PrList items={recents} token={token} />
+          <PrList items={recents} />
         </section>
       )}
 
@@ -237,7 +217,7 @@ export function RepoView({ repo, token }: { repo: RepoRef; token: string }) {
         </div>
       </header>
       <main class="home repo">
-        <Loaded state={state} retry={retry} empty="PR はありません。" token={token} showRepo={false} />
+        <Loaded state={state} retry={retry} empty="PR はありません。" showRepo={false} />
         <button
           class="danger"
           onClick={() => {
