@@ -17,7 +17,11 @@ GitHub の PR に含まれる画像差分（VRT スナップショットなど�
    - トークンはブラウザの localStorage にのみ保存され、`api.github.com` 以外には送信しない
    - トークンを設定すると、自分のリポジトリの PR と自分が関係する PR も「新しい PR」に並ぶ
 
-URL は `…/#/owner/repo/pull/123` の形なので、GitHub の PR URL の `https://github.com/` 以降をそのまま `#/` の後ろに付ければ開ける。`?url=<PR の URL>` でも開ける。Android ではホーム画面に追加すると、共有メニューからこのアプリに PR の URL を渡せる。
+URL は `…/#/owner/repo/pull/123` の形なので、GitHub の PR URL の `https://github.com/` 以降をそのまま `#/` の後ろに付ければ開ける。`?url=<PR の URL>` でも開ける。
+
+### 共有メニューから開く（Android）
+
+Android の Chrome でサイトを開き、メニューの「ホーム画面に追加」→「インストール」でアプリとして入れると、GitHub アプリやブラウザの共有メニューに「PR Image Diff」が出る。PR を共有するとその PR の画像差分が直接開く（Web Share Target）。iOS の Safari は Web Share Target に対応していないため使えない。
 
 ## 開発
 
