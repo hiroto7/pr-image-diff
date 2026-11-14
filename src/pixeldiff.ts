@@ -12,12 +12,15 @@ const MAX_PIXELS = 8_000_000;
 const THRESHOLD = 12;
 
 const cache = new Map<string, Promise<DiffResult>>();
+// 計算は重く画面を止めるので、1 枚ずつ、間に描画の機会を挟んで実行する
+let queue: Promise<unknown> = Promise.resolve();
 
 export function computeDiff(before: Loaded, after: Loaded): Promise<DiffResult> {
   const key = `${before.url}|${after.url}`;
   let p = cache.get(key);
   if (!p) {
-    p = run(before, after);
+    p = queue.then(() => new Promise((r) => setTimeout(r))).then(() => run(before, after));
+    queue = p.catch(() => {});
     cache.set(key, p);
     p.catch(() => cache.delete(key));
   }

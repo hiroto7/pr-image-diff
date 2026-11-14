@@ -61,8 +61,11 @@ function useImage(src: ImgSrc | null, token: string, enabled: boolean): [ImgStat
   return [state, () => setAttempt((a) => a + 1)];
 }
 
-/** 1 ファイル分の変更前後の画像と、Diff モード時のピクセル差分を読み込む。 */
-export function useFileDiff(file: PrFile, ctx: Ctx, mode: Mode, enabled: boolean): FileDiff {
+/**
+ * 1 ファイル分の変更前後の画像と、Diff モード時のピクセル差分を読み込む。
+ * 画像は enabled になったら読み込み、差分は visible の間だけ計算する。
+ */
+export function useFileDiff(file: PrFile, ctx: Ctx, mode: Mode, enabled: boolean, visible = enabled): FileDiff {
   const beforeSrc =
     file.status === 'added' ? null : { ref: ctx.ref, sha: ctx.baseSha, path: file.previous_filename ?? file.filename };
   const afterSrc = file.status === 'removed' ? null : { ref: ctx.ref, sha: ctx.headSha, path: file.filename };
@@ -73,7 +76,7 @@ export function useFileDiff(file: PrFile, ctx: Ctx, mode: Mode, enabled: boolean
   const b = before.status === 'ok' ? before.img : null;
   const a = after.status === 'ok' ? after.img : null;
   useEffect(() => {
-    if (mode !== 'diff' || !b || !a) return;
+    if (mode !== 'diff' || !visible || !b || !a) return;
     let alive = true;
     setDiff({ status: 'loading' });
     computeDiff(b, a).then(
@@ -83,7 +86,7 @@ export function useFileDiff(file: PrFile, ctx: Ctx, mode: Mode, enabled: boolean
     return () => {
       alive = false;
     };
-  }, [mode, b, a]);
+  }, [mode, visible, b, a]);
 
   return {
     before,
@@ -247,7 +250,13 @@ export function Stage({ d, mode, pos, onPos, fit }: StageProps) {
 
   if (mode === 'diff') {
     if (d.diff.status === 'error') return <div class="ph error">{d.diff.message}</div>;
-    if (d.diff.status !== 'ok') return <div class="ph">差分を計算中…</div>;
+    // 計算前も仕上がりと同じ大きさの枠を出し、表示されたときに前後のカードがずれないようにする
+    if (d.diff.status !== 'ok')
+      return (
+        <div class="stage pending" style={stageStyle}>
+          差分を計算中…
+        </div>
+      );
     return (
       <div class="stage" style={stageStyle}>
         <img src={d.diff.result.url} alt="ピクセル差分" draggable={false} />

@@ -114,24 +114,31 @@ export function PrView({ prRef, token, fileIndex, mode, setMode, onOpenFile, onN
   );
 }
 
-/** 画面に近づいたら true になり、以後は true のまま。 */
-function useNearViewport(): [RefObject<HTMLElement>, boolean] {
-  const el = useRef<HTMLElement>(null);
-  const [near, setNear] = useState(false);
+/** 要素が画面 (の上下 margin 以内) にあるか。sticky なら一度 true になったら true のまま。 */
+function useInView(el: RefObject<HTMLElement>, margin: string, sticky: boolean): boolean {
+  const [inView, setInView] = useState(false);
+  const done = sticky && inView;
   useEffect(() => {
-    if (!el.current || near) return;
-    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && setNear(true), {
-      rootMargin: '800px 0px',
-    });
+    if (!el.current || done) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const now = entries[entries.length - 1].isIntersecting;
+        if (now || !sticky) setInView(now);
+      },
+      { rootMargin: margin },
+    );
     io.observe(el.current);
     return () => io.disconnect();
-  }, [near]);
-  return [el, near];
+  }, [done]);
+  return inView;
 }
 
 function Card({ file, ctx, mode, onOpen }: { file: PrFile; ctx: Ctx; mode: Mode; onOpen: () => void }) {
-  const [el, near] = useNearViewport();
-  const d = useFileDiff(file, ctx, mode, near);
+  const el = useRef<HTMLElement>(null);
+  // 画像は早めに読み込み始め、重い差分計算は実際に見えているカードだけ行う
+  const near = useInView(el, '800px 0px', true);
+  const visible = useInView(el, '100px 0px', false);
+  const d = useFileDiff(file, ctx, mode, near, visible);
   const [pos, setPos] = useState(50);
   const both = d.before.status === 'ok' && d.after.status === 'ok';
   return (
