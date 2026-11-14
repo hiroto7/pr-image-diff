@@ -50,7 +50,11 @@ function decode(url: string): Promise<HTMLImageElement> {
 }
 
 const cache = new Map<string, Promise<Loaded>>();
+const loaded = new Map<string, Loaded>();
 const keyOf = (s: ImgSrc) => `${s.ref.owner}/${s.ref.repo}@${s.sha}:${s.path}`;
+
+/** 取得済みの画像があれば、待たずに返す。 */
+export const peekImage = (src: ImgSrc) => loaded.get(keyOf(src));
 
 export function loadImage(src: ImgSrc, token: string): Promise<Loaded> {
   const key = keyOf(src);
@@ -69,6 +73,7 @@ export function loadImage(src: ImgSrc, token: string): Promise<Loaded> {
       }
     });
     cache.set(key, p);
+    p.then((img) => loaded.set(key, img), () => {});
     // 失敗はキャッシュしない (再試行できるように)
     p.catch(() => cache.get(key) === p && cache.delete(key));
   }

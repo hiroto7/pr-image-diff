@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import type { ImgSrc, PrFile, PrRef } from './github';
-import { loadImage, type Loaded } from './loader';
-import { computeDiff, type DiffResult } from './pixeldiff';
+import { loadImage, peekImage, type Loaded } from './loader';
+import { computeDiff, peekDiff, type DiffResult } from './pixeldiff';
 
 export type Mode = '2up' | 'swipe' | 'onion' | 'diff';
 export const MODES: { id: Mode; label: string }[] = [
@@ -41,24 +41,34 @@ export interface FileDiff {
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+// 状態には「どの画像のものか」を添えて持つ。拡大表示で次のファイルへ移ったとき、
+// 前のファイルの結果が一瞬表示されるのを防ぐため、対象が違えば未取得として扱う。
 function useImage(src: ImgSrc | null, token: string, enabled: boolean): [ImgState, () => void] {
-  const [state, setState] = useState<ImgState>(src ? { status: 'idle' } : { status: 'none' });
-  const [attempt, setAttempt] = useState(0);
   const key = src ? `${src.sha}:${src.path}` : '';
+  const [state, setState] = useState<{ key: string; s: ImgState }>({ key: '', s: { status: 'idle' } });
+  const [attempt, setAttempt] = useState(0);
+  // 取得済みならその場で使う (読み込み中の表示を挟まない)
+  const ready = src && enabled ? peekImage(src) : undefined;
   useEffect(() => {
-    if (!src) return setState({ status: 'none' });
-    if (!enabled) return setState({ status: 'idle' });
+    if (!src || !enabled || ready) return;
     let alive = true;
-    setState({ status: 'loading' });
+    setState({ key, s: { status: 'loading' } });
     loadImage(src, token).then(
-      (img) => alive && setState({ status: 'ok', img }),
-      (e) => alive && setState({ status: 'error', message: messageOf(e) }),
+      (img) => alive && setState({ key, s: { status: 'ok', img } }),
+      (e) => alive && setState({ key, s: { status: 'error', message: messageOf(e) } }),
     );
     return () => {
       alive = false;
     };
   }, [key, token, enabled, attempt]);
-  return [state, () => setAttempt((a) => a + 1)];
+  const current: ImgState = !src
+    ? { status: 'none' }
+    : ready
+      ? { status: 'ok', img: ready }
+      : state.key === key
+        ? state.s
+        : { status: 'idle' };
+  return [current, () => setAttempt((a) => a + 1)];
 }
 
 /**
@@ -71,22 +81,25 @@ export function useFileDiff(file: PrFile, ctx: Ctx, mode: Mode, enabled: boolean
   const afterSrc = file.status === 'removed' ? null : { ref: ctx.ref, sha: ctx.headSha, path: file.filename };
   const [before, retryBefore] = useImage(beforeSrc, ctx.token, enabled);
   const [after, retryAfter] = useImage(afterSrc, ctx.token, enabled);
-  const [diff, setDiff] = useState<DiffState>({ status: 'idle' });
 
   const b = before.status === 'ok' ? before.img : null;
   const a = after.status === 'ok' ? after.img : null;
+  const pair = b && a ? `${b.url}|${a.url}` : '';
+  const [state, setState] = useState<{ pair: string; s: DiffState }>({ pair: '', s: { status: 'idle' } });
+  const ready = b && a ? peekDiff(b, a) : undefined;
   useEffect(() => {
-    if (mode !== 'diff' || !visible || !b || !a) return;
+    if (mode !== 'diff' || !visible || !b || !a || ready) return;
     let alive = true;
-    setDiff({ status: 'loading' });
+    setState({ pair, s: { status: 'loading' } });
     computeDiff(b, a).then(
-      (result) => alive && setDiff({ status: 'ok', result }),
-      (e) => alive && setDiff({ status: 'error', message: messageOf(e) }),
+      (result) => alive && setState({ pair, s: { status: 'ok', result } }),
+      (e) => alive && setState({ pair, s: { status: 'error', message: messageOf(e) } }),
     );
     return () => {
       alive = false;
     };
   }, [mode, visible, b, a]);
+  const diff: DiffState = ready ? { status: 'ok', result: ready } : state.pair === pair ? state.s : { status: 'idle' };
 
   return {
     before,
