@@ -35,6 +35,7 @@ export interface PrSummary extends PrRef {
   author?: string;
   draft?: boolean;
   state?: 'open' | 'merged' | 'closed';
+  updatedAt?: string;
 }
 
 export class GhError extends Error {
@@ -136,9 +137,19 @@ async function gh(path: string, token: string, accept = 'application/vnd.github+
   } catch {
     throw new GhError('ネットワークエラーで取得できませんでした。', 0, true);
   }
+  if (!path.startsWith('/search')) {
+    const left = res.headers.get('x-ratelimit-remaining');
+    if (left != null) coreRemaining = Number(left);
+  }
   if (!res.ok) throw await toError(res, !!token);
   return res;
 }
+
+// 検索以外の API の残り回数 (最後に見た値)
+let coreRemaining: number | null = null;
+
+/** 必須ではない調査に API を使ってよいか。トークンなしでは残りが少なくなったら控える。 */
+export const hasCoreBudget = (token: string) => !!token || coreRemaining == null || coreRemaining > 25;
 
 const repoPath = (r: PrRef) => `/repos/${r.owner}/${r.repo}`;
 
@@ -186,6 +197,21 @@ export async function listFiles(ref: PrRef, pr: PrInfo, token: string): Promise<
   return out.flat();
 }
 
+/**
+ * PR に含まれる画像の変更数。先頭 300 ファイルまでしか見ないので、
+ * そこまでに画像がなく続きがある場合は null (不明) を返す。
+ */
+export async function countImages(ref: PrRef, token: string): Promise<number | null> {
+  let count = 0;
+  for (let page = 1; page <= 3; page++) {
+    const res = await gh(`${repoPath(ref)}/pulls/${ref.number}/files?per_page=100&page=${page}`, token);
+    const files = (await res.json()) as PrFile[];
+    count += files.filter((f) => isImage(f.filename) && f.status !== 'unchanged').length;
+    if (files.length < 100) return count;
+  }
+  return count > 0 ? count : null;
+}
+
 export interface ImgSrc {
   ref: PrRef;
   sha: string;
@@ -226,6 +252,7 @@ interface SearchItem {
   html_url: string;
   title: string;
   created_at: string;
+  updated_at: string;
   draft?: boolean;
   state: string;
   pull_request?: { merged_at?: string | null };
@@ -254,6 +281,7 @@ export async function searchPrs(qualifiers: string[], token: string): Promise<Pr
         ...ref,
         title: it.title,
         createdAt: it.created_at,
+        updatedAt: it.updated_at,
         author: it.user?.login,
         draft: it.draft,
         state: it.state === 'open' ? 'open' : it.pull_request?.merged_at ? 'merged' : 'closed',
