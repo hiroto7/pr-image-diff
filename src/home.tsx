@@ -28,7 +28,7 @@ function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boo
   return (
     <ul class="pr-list">
       {items.map((p) => (
-        <li>
+        <li class={p.images === 0 ? 'dim' : ''}>
           <a href={prHash(p)}>
             <div class="title">{p.title}</div>
             <div class="meta">
@@ -41,6 +41,8 @@ function PrList({ items, showRepo = true }: { items: PrSummary[]; showRepo?: boo
               ]
                 .filter(Boolean)
                 .join(' · ')}
+              {p.images != null &&
+                (p.images > 0 ? <strong class="has-images"> · 画像 {p.images}</strong> : ' · 画像なし')}
             </div>
           </a>
         </li>

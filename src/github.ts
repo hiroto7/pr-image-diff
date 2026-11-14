@@ -35,6 +35,8 @@ export interface PrSummary extends PrRef {
   author?: string;
   draft?: boolean;
   state?: 'open' | 'merged' | 'closed';
+  /** 画像の変更数。わからないときは undefined (トークンがあるときだけ取得できる) */
+  images?: number;
 }
 
 export class GhError extends Error {
@@ -232,32 +234,115 @@ interface SearchItem {
   user?: { login: string };
 }
 
-/**
- * PR (open / merged / closed すべて) を検索して新しい順に返す。クエリは 1 つでも成功すれば結果を返し、
- * 全滅したときだけ最初のエラーを投げる (アクセスできないリポジトリが混ざっていても一覧を出すため)。
- */
-export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
+async function searchRest(queries: string[]): Promise<PrSummary[][]> {
   const settled = await Promise.allSettled(
-    qualifiers.map(async (q) => {
-      const query = encodeURIComponent(`is:pr ${q}`);
-      const res = await gh(`/search/issues?q=${query}&sort=created&order=desc&per_page=30`, token);
-      return ((await res.json()).items ?? []) as SearchItem[];
+    queries.map(async (q) => {
+      const res = await gh(`/search/issues?q=${encodeURIComponent(q)}&sort=created&order=desc&per_page=30`, '');
+      const items = ((await res.json()).items ?? []) as SearchItem[];
+      return items.flatMap((it): PrSummary[] => {
+        const ref = parsePrRef(it.html_url);
+        if (!ref) return [];
+        return [
+          {
+            ...ref,
+            title: it.title,
+            createdAt: it.created_at,
+            author: it.user?.login,
+            draft: it.draft,
+            state: it.state === 'open' ? 'open' : it.pull_request?.merged_at ? 'merged' : 'closed',
+          },
+        ];
+      });
     }),
   );
   const ok = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
   if (!ok.length && settled.length) throw (settled[0] as PromiseRejectedResult).reason;
+  return ok;
+}
+
+interface GqlPr {
+  number?: number;
+  title: string;
+  url: string;
+  createdAt: string;
+  isDraft: boolean;
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  changedFiles: number;
+  author?: { login: string } | null;
+  files?: { nodes: ({ path: string } | null)[] } | null;
+}
+
+const GQL_FILES = 100;
+const GQL_PR = `fragment pr on PullRequest {
+  number title url createdAt isDraft state changedFiles
+  author { login }
+  files(first: ${GQL_FILES}) { nodes { path } }
+}`;
+
+/**
+ * GraphQL なら、複数の検索と各 PR の変更ファイル一覧を 1 リクエストで取れる
+ * (PR ごとに API を呼ばずに画像の変更数がわかる)。GraphQL は認証必須なのでトークンがあるときだけ使う。
+ */
+async function searchGraphql(queries: string[], token: string): Promise<PrSummary[][]> {
+  const vars = queries.map((_, i) => `$q${i}: String!`).join(', ');
+  const fields = queries.map((_, i) => `q${i}: search(query: $q${i}, type: ISSUE, first: 30) { nodes { ...pr } }`);
+  let res: Response;
+  try {
+    res = await fetch(`${API}/graphql`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `query(${vars}) {\n${fields.join('\n')}\n}\n${GQL_PR}`,
+        variables: Object.fromEntries(queries.map((q, i) => [`q${i}`, `${q} sort:created-desc`])),
+      }),
+    });
+  } catch {
+    throw new GhError('ネットワークエラーで取得できませんでした。', 0, true);
+  }
+  if (!res.ok) throw await toError(res, true);
+  const body = (await res.json()) as {
+    data?: Record<string, { nodes: (GqlPr | null)[] } | null>;
+    errors?: { message: string }[];
+  };
+  const lists = queries.flatMap((_, i) => {
+    const nodes = body.data?.[`q${i}`]?.nodes;
+    return nodes ? [nodes] : [];
+  });
+  if (!lists.length) throw new GhError(`GitHub API エラー ${body.errors?.[0]?.message ?? ''}`, 0, false);
+  return lists.map((nodes) =>
+    nodes.flatMap((n): PrSummary[] => {
+      const ref = n?.url ? parsePrRef(n.url) : null;
+      if (!n || !ref) return [];
+      const paths = n.files?.nodes.flatMap((f) => (f ? [f.path] : []));
+      const count = paths?.filter(isImage).length;
+      // 先頭 100 ファイルに画像がなく、まだ続きがある場合は「不明」
+      const images = count == null || (count === 0 && n.changedFiles > GQL_FILES) ? undefined : count;
+      return [
+        {
+          ...ref,
+          title: n.title,
+          createdAt: n.createdAt,
+          author: n.author?.login,
+          draft: n.isDraft,
+          state: n.state.toLowerCase() as PrSummary['state'],
+          images,
+        },
+      ];
+    }),
+  );
+}
+
+/**
+ * PR (open / merged / closed すべて) を検索して新しい順に返す。クエリは 1 つでも成功すれば結果を返す
+ * (アクセスできないリポジトリが混ざっていても一覧を出すため)。
+ */
+export async function searchPrs(qualifiers: string[], token: string): Promise<PrSummary[]> {
+  const queries = qualifiers.map((q) => `is:pr ${q}`);
+  const lists = token ? await searchGraphql(queries, token) : await searchRest(queries);
   const seen = new Map<string, PrSummary>();
-  for (const it of ok.flat()) {
-    const ref = parsePrRef(it.html_url);
-    if (ref && !seen.has(it.html_url))
-      seen.set(it.html_url, {
-        ...ref,
-        title: it.title,
-        createdAt: it.created_at,
-        author: it.user?.login,
-        draft: it.draft,
-        state: it.state === 'open' ? 'open' : it.pull_request?.merged_at ? 'merged' : 'closed',
-      });
+  for (const p of lists.flat()) {
+    const key = `${p.owner}/${p.repo}#${p.number}`.toLowerCase();
+    if (!seen.has(key)) seen.set(key, p);
   }
   return [...seen.values()].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 }
